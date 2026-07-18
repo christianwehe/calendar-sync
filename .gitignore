@@ -15,7 +15,8 @@ htmlcov/
 # Secrets & local runtime state
 .env
 client_secret_*.json
-google_token.json
+google_token*.json
+jobs.toml
 
 # Editors
 .vscode/

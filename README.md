@@ -64,6 +64,7 @@ cp .env.example .env
 | `GOOGLE_TOKEN_PATH` | no (default `google_token.json`) | Where the OAuth refresh token is cached after the first login |
 | `CALENDAR_SYNC_TIMEZONE` | no (default `Europe/Berlin`) | IANA timezone used for created events |
 | `CALENDAR_SYNC_TAG` | no (default `spielerplus-sync`) | Tag used to identify events this tool manages |
+| `CALENDAR_SYNC_JOBS_FILE` | no | Path to a multi-job TOML config — see [Multiple jobs](#multiple-jobs) |
 
 ### Setting up Google Calendar API access
 
@@ -76,15 +77,56 @@ cp .env.example .env
    consent and caches a refresh token at `GOOGLE_TOKEN_PATH`. Subsequent
    `sync` runs (including on a headless server) reuse that token.
 
-### Multiple SpielerPlus profiles
+### Multiple jobs
 
 Some SpielerPlus logins manage several profiles under one account (e.g.
 a shared family login covering multiple children/teams — SpielerPlus
-calls this "switching users"). If that applies to you, set
-`SPIELERPLUS_USER_ID` to the profile to sync. To sync several profiles,
-run `calendar-sync sync` once per profile with different `.env` files
-(and, ideally, different `GOOGLE_CALENDAR_ID` / `CALENDAR_SYNC_TAG`
-values so their events don't collide).
+calls this "switching users"). For a single such profile, just set
+`SPIELERPLUS_USER_ID` in `.env` as usual. To sync **several** profiles,
+each to its own Google Calendar, define a "job" per profile in a TOML
+file instead:
+
+```bash
+cp jobs.example.toml jobs.toml   # then edit it
+```
+
+```toml
+[[job]]
+name = "u7"
+spielerplus_user_id = "16828345"
+google_calendar_id = "aaaa...@group.calendar.google.com"
+
+[[job]]
+name = "u9"
+spielerplus_user_id = "16836032"
+google_calendar_id = "bbbb...@group.calendar.google.com"
+```
+
+Every field except `name` is optional per job and falls back to the
+matching value from `.env`/the environment (`SPIELERPLUS_USER_ID`,
+`GOOGLE_CALENDAR_ID`, `CALENDAR_SYNC_TAG`, `CALENDAR_SYNC_TIMEZONE`,
+`GOOGLE_TOKEN_PATH`) — see the comments in `jobs.example.toml` for the
+full list and when you'd want to override one. `GOOGLE_CREDENTIALS_PATH`
+(the OAuth client) is always shared across jobs.
+
+Point calendar-sync at the file with `CALENDAR_SYNC_JOBS_FILE=jobs.toml`
+in `.env`, or pass `--jobs-file jobs.toml` on the command line. Once
+configured, `sync`/`list-events`/`google-login` all become multi-job
+aware:
+
+```bash
+calendar-sync list-jobs               # sanity-check the resolved config
+calendar-sync google-login            # caches a token for every distinct calendar/account used
+calendar-sync sync                    # runs every job, one after another
+calendar-sync sync --job u7           # ...or just one
+calendar-sync list-events --job u7    # list-events needs --job once there's more than one
+```
+
+All jobs share a single logged-in SpielerPlus session (switching profile
+between jobs) rather than logging in once per job, and jobs targeting
+the same Google account share one cached OAuth token. If one job fails
+(e.g. a bad calendar id), `sync` still runs the remaining jobs and exits
+non-zero at the end so the failure isn't silently swallowed.
 
 ## Usage
 
@@ -101,7 +143,9 @@ calendar-sync sync
 
 Run on a schedule (cron, systemd timer, CI) to keep the calendar in sync
 periodically. `calendar-sync sync` is idempotent — running it repeatedly
-without changes on SpielerPlus is a no-op.
+without changes on SpielerPlus is a no-op. (Add `--jobs-file jobs.toml`
+to any of the above to sync multiple profiles — see
+[Multiple jobs](#multiple-jobs).)
 
 ## Development
 
@@ -132,11 +176,12 @@ src/calendar_sync/
   spielerplus/       # SpielerPlus client (HTTP session, HTML parser, models)
   google_calendar/    # Google Calendar API client (auth, CRUD, models)
   sync/                # SyncService tying the two together
-  config.py            # Settings loaded from environment / .env
+  config.py            # Settings + multi-job (JobConfig/load_jobs) config
   cli.py                # `calendar-sync` command line entry point
 tests/
   fixtures/             # Static SpielerPlus HTML samples used by parser tests
   unit/
+jobs.example.toml        # Template for multi-job configuration (see above)
 ```
 
 ## Caveats & known limitations

@@ -1,0 +1,42 @@
+# Example multi-job configuration for calendar-sync.
+#
+# Use this when one SpielerPlus login manages several profiles/teams
+# (SpielerPlus calls switching between them "switch-user") and you want
+# each synced to its own Google Calendar. Copy this file to e.g.
+# jobs.toml, adjust the entries below, and point calendar-sync at it via
+# the CALENDAR_SYNC_JOBS_FILE environment variable (see .env.example) or
+# `calendar-sync --jobs-file jobs.toml sync`.
+#
+# Every field except `name` is optional and falls back to the
+# corresponding value from your .env / environment (SPIELERPLUS_*,
+# GOOGLE_CALENDAR_ID, CALENDAR_SYNC_TAG, CALENDAR_SYNC_TIMEZONE,
+# GOOGLE_TOKEN_PATH) when omitted. `google_credentials_path` (the OAuth
+# client secret) is always shared across all jobs and only comes from
+# the environment/.env, since jobs are expected to belong to the same
+# Google Cloud OAuth client.
+#
+# `sync run` processes every job in this file in one go (use
+# `--job <name>` to run just one); each job's events are matched and
+# managed independently via its own sync_tag, so jobs can safely target
+# the same calendar without colliding.
+
+[[job]]
+name = "u7"
+spielerplus_user_id = "16828345"
+google_calendar_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@group.calendar.google.com"
+
+[[job]]
+name = "u9"
+spielerplus_user_id = "16836032"
+google_calendar_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@group.calendar.google.com"
+
+# Fields can be overridden per job when a default doesn't fit, e.g. a
+# distinct sync tag (only needed if two jobs target the same calendar)
+# or a separate cached OAuth token (only needed if this job's calendar
+# lives under a different Google account than the others).
+[[job]]
+name = "herren-1"
+spielerplus_user_id = "16501871"
+google_calendar_id = "cccccccccccccccccccccccccccccccccccccccccccccccc@group.calendar.google.com"
+sync_tag = "spielerplus-sync-herren-1"
+timezone = "Europe/Berlin"
