@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+build/
+dist/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets & local runtime state
+.env
+google_credentials.json
+google_token.json
+
+# Editors
+.vscode/
+.idea/

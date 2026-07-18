@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="de">
+<head><title>Einloggen</title></head>
+<body>
+  <form id="login-form" method="post" action="/site/login">
+    <input type="hidden" name="_csrf" value="test-csrf-token-abc123">
+    <input type="text" name="LoginForm[email]">
+    <input type="password" name="LoginForm[password]">
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>
