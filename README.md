@@ -147,6 +147,55 @@ without changes on SpielerPlus is a no-op. (Add `--jobs-file jobs.toml`
 to any of the above to sync multiple profiles — see
 [Multiple jobs](#multiple-jobs).)
 
+## Running on a schedule with systemd
+
+`scripts/install-systemd.sh` sets up a systemd **timer** (a cron-like,
+declarative periodic job — not the `cron` daemon) that runs
+`calendar-sync sync` on a schedule, plus a oneshot **service** it
+triggers. Both are generated from the templates in `systemd/` at
+install time, with your project path and interpreter substituted in.
+
+```bash
+# Every 15 minutes (default), as your own user -- no root needed
+scripts/install-systemd.sh
+
+# Or pick your own schedule (systemd calendar syntax, not cron syntax)
+scripts/install-systemd.sh --on-calendar hourly
+scripts/install-systemd.sh --on-calendar '*-*-* 06,18:00:00'   # twice a day
+scripts/install-systemd.sh --on-calendar 'Mon..Fri *-*-* 07:00:00'
+```
+
+Validate a schedule pattern before installing with
+`systemd-analyze calendar '<pattern>'` — it prints the next few times it
+would fire. See `man systemd.time` for the full syntax.
+
+Useful commands after installing:
+
+```bash
+systemctl --user list-timers calendar-sync.timer   # when it'll next run
+systemctl --user start calendar-sync.service        # trigger a run right now
+journalctl --user -u calendar-sync.service           # logs
+scripts/uninstall-systemd.sh                          # remove it again
+```
+
+By default this installs a **per-user** unit
+(`~/.config/systemd/user/`) that runs as you, with no `sudo` required —
+appropriate since it holds your personal SpielerPlus/Google credentials.
+The tradeoff: user services normally only run while you're logged in.
+For a headless box (or to keep syncing after logout), enable lingering
+once: `sudo loginctl enable-linger $USER`. The install script prints
+this reminder.
+
+For a shared/headless machine you'd rather manage system-wide, pass
+`--system` (installs to `/etc/systemd/system/`, needs `sudo`, and runs
+as whichever user you pass via `--run-as`, defaulting to whoever ran the
+script — never as root). Uninstall with the matching
+`scripts/uninstall-systemd.sh --system`.
+
+Re-running `install-systemd.sh` (e.g. after changing `--on-calendar` or
+editing a template) is safe — it overwrites the installed unit files and
+re-enables the timer.
+
 ## Development
 
 ```bash
@@ -182,6 +231,8 @@ tests/
   fixtures/             # Static SpielerPlus HTML samples used by parser tests
   unit/
 jobs.example.toml        # Template for multi-job configuration (see above)
+systemd/                 # calendar-sync.service / .timer templates
+scripts/                 # install-systemd.sh / uninstall-systemd.sh
 ```
 
 ## Caveats & known limitations

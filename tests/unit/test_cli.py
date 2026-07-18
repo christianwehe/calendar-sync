@@ -31,6 +31,20 @@ def test_main_reports_missing_configuration_as_usage_error(monkeypatch, capsys):
     assert "SPIELERPLUS_EMAIL" in capsys.readouterr().err
 
 
+def test_main_loads_dotenv_relative_to_the_working_directory():
+    # Regression test: python-dotenv's default load_dotenv() searches
+    # upward from the installed package file's location, not the CWD.
+    # That only found .env by accident here because of the editable dev
+    # install; a systemd service (WorkingDirectory=<project dir>, non-
+    # editable install) needs usecwd=True to find .env at all.
+    with patch("calendar_sync.cli.load_dotenv") as fake_load_dotenv, patch.object(
+        cli, "cmd_list_events", return_value=0
+    ):
+        cli.main(["list-events"])
+
+    fake_load_dotenv.assert_called_once_with(usecwd=True)
+
+
 def test_main_dispatches_to_the_matching_subcommand():
     with patch("calendar_sync.cli.load_dotenv"), patch.object(
         cli, "cmd_list_events", return_value=0

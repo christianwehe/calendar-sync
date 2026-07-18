@@ -197,7 +197,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv()
+    # usecwd=True: search for .env starting from the current working
+    # directory, not from wherever this installed package file happens
+    # to live (python-dotenv's default). This is what makes a systemd
+    # service with WorkingDirectory=<project dir> find .env correctly
+    # regardless of whether the package was installed editable or not.
+    load_dotenv(usecwd=True)
     parser = build_parser()
     args = parser.parse_args(argv)
     logging.basicConfig(

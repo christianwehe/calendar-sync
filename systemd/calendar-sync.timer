@@ -1,0 +1,21 @@
+[Unit]
+Description=Run calendar-sync on a schedule
+
+[Timer]
+# systemd calendar event syntax, not cron syntax -- see `man
+# systemd.time` or validate a pattern with:
+#   systemd-analyze calendar '__ON_CALENDAR__'
+# Examples: "*:0/15" (every 15 min), "hourly", "*-*-* 06,18:00:00"
+# (twice a day), "Mon..Fri *-*-* 07:00:00" (weekday mornings).
+OnCalendar=__ON_CALENDAR__
+
+# Catch up on a run that was missed while the machine was off/asleep
+# (common on laptops/desktops running a user service).
+Persistent=true
+
+# Spread load a little if this pattern is ever used on several
+# machines/accounts hitting SpielerPlus/Google at the same instant.
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target
