@@ -97,14 +97,16 @@ def test_parse_training_event_uses_second_time_value_and_estimates_end(load_fixt
     assert training.attendance == Attendance.ACCEPTED
 
 
-def test_parse_match_event_uses_explicit_start_and_end(load_fixture):
+def test_parse_match_event_uses_actual_start_not_meetup_time(load_fixture):
     events = parser.parse_events(load_fixture("events_page.html"), reference_date=REFERENCE_DATE)
     match = events[1]
 
     assert match.event_type == "match"
     assert match.title == "Punktspiel"
     assert match.subtitle == "Heimspiel"
-    assert match.start == datetime(2026, 7, 20, 17, 0)
+    # Fixture's three time slots are meetup=17:00, start=17:30, end=19:30.
+    # The synced event must use the actual start, not the earlier meetup time.
+    assert match.start == datetime(2026, 7, 20, 17, 30)
     assert match.end == datetime(2026, 7, 20, 19, 30)
     assert match.end_is_estimated is False
     assert match.attendance == Attendance.UNSURE

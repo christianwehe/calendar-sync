@@ -184,6 +184,17 @@ class GoogleCalendarClient:
 
 
 def _parse_api_datetime(node: dict[str, str]) -> datetime:
+    """Parse a Calendar API date/dateTime back into the naive local
+    wall-clock datetime our models use everywhere else.
+
+    We always write events with a bare (timezone-less) ``dateTime`` plus
+    an explicit ``timeZone`` field (see ``_to_api``), but the API echoes
+    it back *with* a UTC offset attached. Stripping it back to naive here
+    keeps round-tripped values comparable to freshly built ``CalendarEvent``
+    objects with ``==`` — without this, every event would compare as
+    "changed" on every sync run (naive != aware is always True in Python,
+    even for the same wall-clock time) and get needlessly re-updated.
+    """
     if "dateTime" in node:
-        return datetime.fromisoformat(node["dateTime"])
+        return datetime.fromisoformat(node["dateTime"]).replace(tzinfo=None)
     return datetime.fromisoformat(node["date"])

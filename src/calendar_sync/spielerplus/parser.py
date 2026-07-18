@@ -173,13 +173,20 @@ def _parse_event(event_el: Tag, reference_date: datetime) -> SpielerPlusEvent:
     day, month = int(date_match.group(1)), int(date_match.group(2))
     event_date = resolve_event_date(day, month, reference_date.date())
 
+    # SpielerPlus renders up to three time slots per event: a meetup
+    # time ("Treffpunkt", index 0 — often earlier than the event itself
+    # and sometimes unset, shown as "-:-"), the actual start time
+    # (index 1), and the end time (index 2, also optional). We want the
+    # actual start, so index 1 takes priority; index 0 is only used as a
+    # fallback for the rare event that only has a single time slot at
+    # all (no separate meetup/start distinction).
     time_values = [el.get_text(strip=True) for el in panel.select(".event-time-value")]
 
     start_str = None
-    if len(time_values) > 0:
-        start_str = parse_time_string(time_values[0])
-    if start_str is None and len(time_values) > 1:
+    if len(time_values) > 1:
         start_str = parse_time_string(time_values[1])
+    if start_str is None and len(time_values) > 0:
+        start_str = parse_time_string(time_values[0])
     if start_str is None:
         raise ParseError(f"could not determine start time for event {event_id}")
     start = datetime.combine(event_date, datetime.strptime(start_str, "%H:%M").time())

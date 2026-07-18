@@ -113,6 +113,26 @@ def test_list_managed_events_raises_on_missing_external_id():
         client.list_managed_events()
 
 
+def test_list_managed_events_returns_naive_datetimes_matching_what_was_sent():
+    # Regression test: the API echoes dateTime back with a UTC offset
+    # attached (e.g. "...+02:00") even though we send a bare, offset-less
+    # dateTime plus a separate timeZone field. If list_managed_events
+    # returned that offset-aware value as-is, it could never compare
+    # equal to a freshly built (naive) CalendarEvent, and the sync
+    # service would treat every unchanged event as changed on every run.
+    service = MagicMock()
+    service.events.return_value.list.return_value.execute.return_value = {
+        "items": [_api_event("g1", "training-111")]
+    }
+
+    client = _make_client(service)
+    event = client.list_managed_events()["training-111"]
+
+    assert event.start.tzinfo is None
+    assert event.start == datetime(2026, 7, 18, 19, 0)
+    assert event.end == datetime(2026, 7, 18, 21, 0)
+
+
 def test_create_event_sends_expected_body():
     service = MagicMock()
     service.events.return_value.insert.return_value.execute.return_value = _api_event(
