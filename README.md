@@ -109,6 +109,28 @@ matching value from `.env`/the environment (`SPIELERPLUS_USER_ID`,
 full list and when you'd want to override one. `GOOGLE_CREDENTIALS_PATH`
 (the OAuth client) is always shared across jobs.
 
+You can also point several jobs at the same Google Calendar instead of
+giving each its own — handy if you'd rather see every team in one place.
+Give each such job its own `sync_tag` (so their managed events don't
+collide) and a `title_prefix`, which gets prepended to every event title
+as `[prefix]`, so events stay distinguishable, e.g.:
+
+```toml
+[[job]]
+name = "u7"
+spielerplus_user_id = "16828345"
+google_calendar_id = "shared@group.calendar.google.com"
+sync_tag = "spielerplus-sync-u7"
+title_prefix = "U7"
+
+[[job]]
+name = "thomas"
+spielerplus_user_id = "16999999"
+google_calendar_id = "shared@group.calendar.google.com"
+sync_tag = "spielerplus-sync-thomas"
+title_prefix = "Thomas"
+```
+
 Point calendar-sync at the file with `CALENDAR_SYNC_JOBS_FILE=jobs.toml`
 in `.env`, or pass `--jobs-file jobs.toml` on the command line. Once
 configured, `sync`/`list-events`/`google-login` all become multi-job

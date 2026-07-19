@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -106,6 +107,26 @@ def test_cmd_sync_runs_every_job_in_the_jobs_file(tmp_path, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert "[u7] created=1 updated=0 deleted=0 unchanged=0" in out
     assert "[u9] created=1 updated=0 deleted=0 unchanged=0" in out
+
+
+def test_cmd_sync_passes_each_jobs_title_prefix_to_sync_service(tmp_path, monkeypatch, capsys):
+    _env(monkeypatch)
+    jobs_file = _write_jobs_file(
+        tmp_path,
+        text=(
+            '[[job]]\nname = "u7"\nspielerplus_user_id = "111"\n'
+            'google_calendar_id = "shared@group.calendar.google.com"\ntitle_prefix = "U7"\n'
+        ),
+    )
+    fake_spielerplus = MagicMock()
+    fake_event = SimpleNamespace(title="Training", subtitle="")
+
+    patches = _multi_job_patches(fake_spielerplus)
+    with patches[0], patches[1], patches[2], patches[3], patches[4] as sync_service_cls:
+        cli.main(["--jobs-file", str(jobs_file), "sync"])
+
+    _, kwargs = sync_service_cls.call_args
+    assert kwargs["title_builder"](fake_event) == "[U7] Training"
 
 
 def test_cmd_sync_with_job_flag_only_runs_that_job(tmp_path, monkeypatch, capsys):

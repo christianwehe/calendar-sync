@@ -2,7 +2,12 @@ from datetime import datetime
 
 from calendar_sync.google_calendar.models import CalendarEvent
 from calendar_sync.spielerplus.models import Attendance, SpielerPlusEvent
-from calendar_sync.sync.service import SyncService, default_description, default_title
+from calendar_sync.sync.service import (
+    SyncService,
+    default_description,
+    default_title,
+    prefixed_title_builder,
+)
 
 
 class FakeSpielerPlus:
@@ -81,6 +86,15 @@ def test_sync_creates_events_missing_from_google_calendar():
     assert result.updated == []
     assert result.deleted == []
     assert len(gc.created) == 2
+
+
+def test_sync_applies_a_custom_title_builder_to_created_events():
+    sp = FakeSpielerPlus([_sp_event(id="111")])
+    gc = FakeGoogleCalendar()
+
+    SyncService(sp, gc, title_builder=prefixed_title_builder("U7")).sync()
+
+    assert gc.created[0].title == "[U7] Training"
 
 
 def test_sync_leaves_matching_events_untouched():
@@ -188,6 +202,18 @@ def test_default_title_appends_subtitle_when_present():
 def test_default_title_omits_dash_when_no_subtitle():
     event = _sp_event(title="Training", subtitle="")
     assert default_title(event) == "Training"
+
+
+def test_prefixed_title_builder_prepends_bracketed_prefix():
+    event = _sp_event(title="Punktspiel", subtitle="Heimspiel")
+    build = prefixed_title_builder("U7")
+    assert build(event) == "[U7] Punktspiel – Heimspiel"
+
+
+def test_prefixed_title_builder_without_prefix_is_a_no_op():
+    event = _sp_event(title="Training", subtitle="")
+    build = prefixed_title_builder(None)
+    assert build(event) == default_title(event)
 
 
 def test_default_description_flags_estimated_end_time():

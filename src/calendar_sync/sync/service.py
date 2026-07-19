@@ -30,6 +30,14 @@ def default_title(event: SpielerPlusEvent) -> str:
     return event.title
 
 
+def prefixed_title_builder(prefix: str | None, base: TitleBuilder = default_title) -> TitleBuilder:
+    """Wrap a title builder to prepend ``[prefix]``, e.g. for jobs that
+    share one Google Calendar and need their events told apart."""
+    if not prefix:
+        return base
+    return lambda event: f"[{prefix}] {base(event)}"
+
+
 def default_description(event: SpielerPlusEvent) -> str:
     lines = [
         f"Synced from SpielerPlus ({event.event_type} #{event.id}).",

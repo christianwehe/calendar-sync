@@ -13,7 +13,8 @@
 # GOOGLE_TOKEN_PATH) when omitted. `google_credentials_path` (the OAuth
 # client secret) is always shared across all jobs and only comes from
 # the environment/.env, since jobs are expected to belong to the same
-# Google Cloud OAuth client.
+# Google Cloud OAuth client. `title_prefix` has no such fallback — it's
+# unset (no prefix) unless a job sets it explicitly.
 #
 # `sync run` processes every job in this file in one go (use
 # `--job <name>` to run just one); each job's events are matched and
@@ -40,3 +41,15 @@ spielerplus_user_id = "16501871"
 google_calendar_id = "cccccccccccccccccccccccccccccccccccccccccccccccc@group.calendar.google.com"
 sync_tag = "spielerplus-sync-herren-1"
 timezone = "Europe/Berlin"
+
+# You can also point several jobs at the *same* Google Calendar instead
+# of giving each its own. In that case set a distinct `sync_tag` per job
+# (so their managed events don't collide) and a `title_prefix` so events
+# from different profiles stay visually distinguishable in the shared
+# calendar, e.g. "[Thomas] Punktspiel – Heimspiel".
+[[job]]
+name = "thomas"
+spielerplus_user_id = "16999999"
+google_calendar_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@group.calendar.google.com"
+sync_tag = "spielerplus-sync-thomas"
+title_prefix = "Thomas"

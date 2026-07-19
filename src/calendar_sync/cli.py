@@ -13,7 +13,7 @@ from googleapiclient.discovery import Resource
 from .config import ConfigError, ResolvedJob, Settings, load_jobs
 from .google_calendar import GoogleCalendarClient, GoogleCalendarError, build_service
 from .spielerplus import SpielerPlusClient, SpielerPlusError
-from .sync import SyncResult, SyncService
+from .sync import SyncResult, SyncService, prefixed_title_builder
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
             if job.spielerplus_user_id:
                 spielerplus.switch_user(job.spielerplus_user_id)
             google_calendar = _google_client_for_job(settings, job, service_cache)
-            result = SyncService(spielerplus, google_calendar).sync()
+            title_builder = prefixed_title_builder(job.title_prefix)
+            result = SyncService(spielerplus, google_calendar, title_builder=title_builder).sync()
             _print_sync_result(job.name, result)
         except (SpielerPlusError, GoogleCalendarError) as exc:
             print(f"[{job.name}] FAILED: {exc}", file=sys.stderr)
@@ -152,7 +153,8 @@ def cmd_list_jobs(args: argparse.Namespace) -> int:
         print(
             f"{job.name}: spielerplus_user_id={job.spielerplus_user_id!r} "
             f"google_calendar_id={job.google_calendar_id!r} sync_tag={job.sync_tag!r} "
-            f"timezone={job.timezone!r} google_token_path={job.google_token_path}"
+            f"timezone={job.timezone!r} google_token_path={job.google_token_path} "
+            f"title_prefix={job.title_prefix!r}"
         )
     return 0
 

@@ -75,6 +75,7 @@ class JobConfig:
     google_token_path: Path | None = None
     sync_tag: str | None = None
     timezone: str | None = None
+    title_prefix: str | None = None
 
     def resolve(self, settings: Settings) -> "ResolvedJob":
         calendar_id = self.google_calendar_id or settings.google_calendar_id
@@ -88,6 +89,7 @@ class JobConfig:
             google_token_path=self.google_token_path or settings.google_token_path,
             sync_tag=self.sync_tag or settings.sync_tag,
             timezone=self.timezone or settings.timezone,
+            title_prefix=self.title_prefix,
         )
 
 
@@ -101,6 +103,7 @@ class ResolvedJob:
     google_token_path: Path
     sync_tag: str
     timezone: str
+    title_prefix: str | None = None
 
 
 def load_jobs(path: str | Path) -> list[JobConfig]:
@@ -143,6 +146,7 @@ def load_jobs(path: str | Path) -> list[JobConfig]:
                 google_token_path=Path(token_path) if token_path else None,
                 sync_tag=entry.get("sync_tag"),
                 timezone=entry.get("timezone"),
+                title_prefix=entry.get("title_prefix"),
             )
         )
     return jobs

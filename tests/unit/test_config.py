@@ -88,6 +88,7 @@ def test_job_config_resolve_uses_its_own_values_when_set():
         google_token_path=Path("u7-token.json"),
         sync_tag="tag-u7",
         timezone="UTC",
+        title_prefix="U7",
     )
 
     assert job.resolve(_settings()) == ResolvedJob(
@@ -97,7 +98,15 @@ def test_job_config_resolve_uses_its_own_values_when_set():
         google_token_path=Path("u7-token.json"),
         sync_tag="tag-u7",
         timezone="UTC",
+        title_prefix="U7",
     )
+
+
+def test_job_config_resolve_title_prefix_defaults_to_none():
+    job = JobConfig(name="u9", google_calendar_id="u9@group.calendar.google.com")
+    resolved = job.resolve(_settings())
+
+    assert resolved.title_prefix is None
 
 
 def test_job_config_resolve_falls_back_to_settings_when_unset():
@@ -131,6 +140,7 @@ spielerplus_user_id = "222"
 google_calendar_id = "u9@group.calendar.google.com"
 sync_tag = "custom-tag"
 google_token_path = "u9-token.json"
+title_prefix = "U9"
 """
     )
 
@@ -138,8 +148,10 @@ google_token_path = "u9-token.json"
 
     assert [j.name for j in jobs] == ["u7", "u9"]
     assert jobs[0].spielerplus_user_id == "111"
+    assert jobs[0].title_prefix is None
     assert jobs[1].sync_tag == "custom-tag"
     assert jobs[1].google_token_path == Path("u9-token.json")
+    assert jobs[1].title_prefix == "U9"
 
 
 def test_load_jobs_requires_name_field(tmp_path):
@@ -181,4 +193,6 @@ def test_load_jobs_raises_on_invalid_toml(tmp_path):
 
 def test_shipped_example_jobs_file_is_valid():
     jobs = load_jobs(REPO_ROOT / "jobs.example.toml")
-    assert {j.name for j in jobs} == {"u7", "u9", "herren-1"}
+    assert {j.name for j in jobs} == {"u7", "u9", "herren-1", "thomas"}
+    thomas = next(j for j in jobs if j.name == "thomas")
+    assert thomas.title_prefix == "Thomas"
