@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from googleapiclient.discovery import Resource
 
 from .config import ConfigError, ResolvedJob, Settings, load_jobs
@@ -199,12 +199,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # usecwd=True: search for .env starting from the current working
+    # find_dotenv(usecwd=True): search for .env starting from the current working
     # directory, not from wherever this installed package file happens
     # to live (python-dotenv's default). This is what makes a systemd
     # service with WorkingDirectory=<project dir> find .env correctly
     # regardless of whether the package was installed editable or not.
-    load_dotenv(usecwd=True)
+    load_dotenv(find_dotenv(usecwd=True))
     parser = build_parser()
     args = parser.parse_args(argv)
     logging.basicConfig(

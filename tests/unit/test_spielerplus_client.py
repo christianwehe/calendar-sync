@@ -7,11 +7,16 @@ import responses
 from calendar_sync.spielerplus.client import (
     EVENTS_URL,
     LOGIN_URL,
+    MORE_EVENTS_URL,
     PARTICIPATION_URL,
     SWITCH_USER_URL,
     SpielerPlusClient,
 )
-from calendar_sync.spielerplus.exceptions import AuthenticationError, SpielerPlusError
+from calendar_sync.spielerplus.exceptions import (
+    AuthenticationError,
+    ParseError,
+    SpielerPlusError,
+)
 from calendar_sync.spielerplus.models import Attendance, SpielerPlusEvent, Team
 
 
@@ -103,16 +108,88 @@ def test_set_attendance_requires_login_first():
         client.set_attendance(event, Attendance.ACCEPTED, user_id="42")
 
 
+def _event_html(event_id: str, day_month: str = "01.08.") -> str:
+    return f"""
+    <div class="last-week">Kalenderwoche 31</div>
+    <div class="list event">
+      <div class="panel" id="event-training-{event_id}">
+        <div class="panel-heading-text"><span class="panel-title">Training</span></div>
+        <div class="panel-heading-info"><span class="panel-subtitle">{day_month}</span></div>
+        <table class="event-time-table">
+          <tr><td class="event-time-value">-:-</td></tr>
+          <tr><td class="event-time-value">19:00</td></tr>
+        </table>
+      </div>
+    </div>
+    """
+
+
+def _more_events_body(*event_ids: str) -> dict:
+    return {"html": "".join(_event_html(i) for i in event_ids), "count": len(event_ids)}
+
+
 @responses.activate
 def test_get_events_returns_parsed_events(load_fixture):
     responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
     responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    responses.add(responses.POST, MORE_EVENTS_URL, json=_more_events_body())
 
     client = SpielerPlusClient()
     client.login("me@example.com", "hunter2")
     events = client.get_events()
 
     assert [e.id for e in events] == ["111", "222", "333"]
+
+
+@responses.activate
+def test_get_events_loads_further_batches_until_an_empty_one(load_fixture):
+    # The events page only renders the first few events; the rest come
+    # from the "Mehr Termine laden" AJAX endpoint, offset by the number
+    # of events already loaded.
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    responses.add(responses.POST, MORE_EVENTS_URL, json=_more_events_body("444", "555"))
+    responses.add(responses.POST, MORE_EVENTS_URL, json=_more_events_body("666"))
+    responses.add(responses.POST, MORE_EVENTS_URL, json=_more_events_body())
+
+    client = SpielerPlusClient()
+    client.login("me@example.com", "hunter2")
+    events = client.get_events()
+
+    assert [e.id for e in events] == ["111", "222", "333", "444", "555", "666"]
+    offsets = [
+        parse_qs(call.request.body)["offset"]
+        for call in responses.calls
+        if call.request.url == MORE_EVENTS_URL
+    ]
+    assert offsets == [["3"], ["5"], ["6"]]
+
+
+@responses.activate
+def test_get_events_drops_duplicates_across_batches(load_fixture):
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    # "111" is also a training in the fixture page, so it has the same uid
+    responses.add(responses.POST, MORE_EVENTS_URL, json=_more_events_body("111", "444"))
+    responses.add(responses.POST, MORE_EVENTS_URL, json=_more_events_body())
+
+    client = SpielerPlusClient()
+    client.login("me@example.com", "hunter2")
+    events = client.get_events()
+
+    assert [e.id for e in events] == ["111", "222", "333", "444"]
+
+
+@responses.activate
+def test_get_events_raises_on_malformed_batch_response(load_fixture):
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    responses.add(responses.POST, MORE_EVENTS_URL, body=load_fixture("login_page.html"))
+
+    client = SpielerPlusClient()
+    client.login("me@example.com", "hunter2")
+    with pytest.raises(ParseError):
+        client.get_events()
 
 
 @responses.activate
