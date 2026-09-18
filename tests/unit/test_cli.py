@@ -37,13 +37,17 @@ def test_main_loads_dotenv_relative_to_the_working_directory():
     # upward from the installed package file's location, not the CWD.
     # That only found .env by accident here because of the editable dev
     # install; a systemd service (WorkingDirectory=<project dir>, non-
-    # editable install) needs usecwd=True to find .env at all.
-    with patch("calendar_sync.cli.load_dotenv") as fake_load_dotenv, patch.object(
+    # editable install) needs find_dotenv(usecwd=True) to find .env at all.
+    # (usecwd is a find_dotenv() argument; load_dotenv() rejects it.)
+    with patch(
+        "calendar_sync.cli.find_dotenv", return_value="/srv/calendar-sync/.env"
+    ) as fake_find_dotenv, patch("calendar_sync.cli.load_dotenv") as fake_load_dotenv, patch.object(
         cli, "cmd_list_events", return_value=0
     ):
         cli.main(["list-events"])
 
-    fake_load_dotenv.assert_called_once_with(usecwd=True)
+    fake_find_dotenv.assert_called_once_with(usecwd=True)
+    fake_load_dotenv.assert_called_once_with("/srv/calendar-sync/.env")
 
 
 def test_main_dispatches_to_the_matching_subcommand():

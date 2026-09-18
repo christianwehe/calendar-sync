@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.spielerplus.de"
 EVENTS_URL = f"{BASE_URL}/events"
+MORE_EVENTS_URL = f"{BASE_URL}/events/ajaxgetevents"
 LOGIN_URL = f"{BASE_URL}/site/login"
 SWITCH_USER_URL = f"{BASE_URL}/site/switch-user"
 PARTICIPATION_URL = f"{BASE_URL}/events/ajax-participation-form"
@@ -29,6 +30,11 @@ _PARTICIPATION_VALUE = {
     Attendance.UNSURE: "2",
     Attendance.DECLINED: "0",
 }
+
+# Upper bound on "load more" requests per get_events() call, as a guard
+# against looping forever should the endpoint ever stop reporting an
+# empty batch. SpielerPlus serves 5 events per batch.
+_MAX_EVENT_BATCHES = 100
 
 # spielerplus.de sits behind Cloudflare, which outright blocks requests
 # carrying the default `python-requests/x.y` User-Agent (fingerprinted as
@@ -98,14 +104,52 @@ class SpielerPlusClient:
         self._get(SWITCH_USER_URL, params={"id": user_id})
 
     def get_events(self) -> list[SpielerPlusEvent]:
-        """Fetch and parse the current user's "Events" page."""
+        """Fetch and parse all upcoming events of the current user.
+
+        The "Events" page itself only renders the next few events; the
+        rest are loaded in batches via the same AJAX endpoint behind the
+        page's "Mehr Termine laden" button, until an empty batch
+        signals the end of the list.
+        """
         self._require_login()
         response = self._get(EVENTS_URL)
         if not parser.is_events_page(response.text):
             raise ParseError(
                 f"expected the events page, got {parser.page_title(response.text)!r}"
             )
-        return parser.parse_events(response.text)
+        events = parser.parse_events(response.text)
+
+        offset = len(events)
+        for _ in range(_MAX_EVENT_BATCHES):
+            batch, count = self._get_more_events(offset)
+            if count == 0:
+                break
+            events.extend(batch)
+            offset += count
+        else:
+            logger.warning(
+                "stopped loading events after %d batches; the list may be incomplete",
+                _MAX_EVENT_BATCHES,
+            )
+
+        # Batches are offset-based, so an event added or removed between
+        # requests can shift one into two batches.
+        unique = {event.uid: event for event in events}
+        return list(unique.values())
+
+    def _get_more_events(self, offset: int) -> tuple[list[SpielerPlusEvent], int]:
+        """Fetch the batch of events following the first ``offset`` ones.
+
+        Returns the parsed events and the server-reported batch size,
+        which is what the next offset has to advance by.
+        """
+        response = self._post(MORE_EVENTS_URL, data={"offset": offset})
+        try:
+            payload = response.json()
+            html, count = payload["html"], int(payload["count"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ParseError(f"unexpected response when loading more events: {exc}") from exc
+        return parser.parse_events(html), count
 
     def set_attendance(
         self,
