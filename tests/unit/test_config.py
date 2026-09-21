@@ -196,3 +196,39 @@ def test_shipped_example_jobs_file_is_valid():
     assert {j.name for j in jobs} == {"u7", "u9", "herren-1", "thomas"}
     thomas = next(j for j in jobs if j.name == "thomas")
     assert thomas.title_prefix == "Thomas"
+
+
+def test_from_env_reads_player_list_settings():
+    settings = Settings.from_env(
+        {
+            "SPIELERPLUS_EMAIL": "me@example.com",
+            "SPIELERPLUS_PASSWORD": "hunter2",
+            "CALENDAR_SYNC_CLUB_NAME": "VfL Ulm",
+            "CALENDAR_SYNC_AGE_CLASS": "f",
+            "CALENDAR_SYNC_FORM_TEMPLATE": "forms/list.pdf",
+        }
+    )
+
+    assert settings.club_name == "VfL Ulm"
+    assert settings.age_class == "f"
+    assert settings.form_template == Path("forms/list.pdf")
+
+
+def test_job_config_player_list_fields_fall_back_to_settings(tmp_path):
+    path = tmp_path / "jobs.toml"
+    path.write_text(
+        '[[job]]\nname = "u8"\nage_class = "F"\n\n[[job]]\nname = "u9"\n'
+    )
+    settings = Settings.from_env(
+        {
+            "SPIELERPLUS_EMAIL": "me@example.com",
+            "SPIELERPLUS_PASSWORD": "hunter2",
+            "CALENDAR_SYNC_CLUB_NAME": "VfL Ulm",
+            "CALENDAR_SYNC_AGE_CLASS": "E",
+        }
+    )
+
+    u8, u9 = (job.resolve(settings) for job in load_jobs(path))
+
+    assert (u8.club_name, u8.age_class) == ("VfL Ulm", "F")
+    assert (u9.club_name, u9.age_class) == ("VfL Ulm", "E")

@@ -25,6 +25,10 @@
 name = "u7"
 spielerplus_user_id = "16828345"
 google_calendar_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@group.calendar.google.com"
+# Only used by `calendar-sync player-list`: what to fill into the
+# association's player list for this team (see README "Player lists").
+club_name = "VfL Ulm"
+age_class = "bambini"  # e-junioren, f-junioren or bambini
 
 [[job]]
 name = "u9"

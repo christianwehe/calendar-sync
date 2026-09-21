@@ -18,6 +18,11 @@ client_secret_*.json
 google_token*.json
 jobs.toml
 
+# Player lists: the blank association form, and filled-in copies (they
+# hold children's names and birth dates)
+KiFu-Spielerliste*.pdf
+Spielerliste-*.pdf
+
 # Editors
 .vscode/
 .idea/

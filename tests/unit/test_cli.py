@@ -1,10 +1,11 @@
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from calendar_sync import cli
-from calendar_sync.spielerplus import SpielerPlusError
+from calendar_sync.spielerplus import Attendance, SpielerPlusError, SpielerPlusEvent, TeamMember
 from calendar_sync.sync import SyncResult
 
 
@@ -16,7 +17,7 @@ def test_build_parser_requires_a_subcommand():
 
 def test_build_parser_accepts_known_subcommands():
     parser = cli.build_parser()
-    for command in ("sync", "list-events", "google-login", "list-jobs"):
+    for command in ("sync", "list-events", "player-list", "google-login", "list-jobs"):
         args = parser.parse_args([command])
         assert args.command == command
         assert callable(args.func)
@@ -269,3 +270,143 @@ def test_cmd_list_jobs_prints_resolved_jobs(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "u7" in out and "u9" in out
     assert "u7@group.calendar.google.com" in out
+
+
+def _event(event_id, event_type="tournament", start=None):
+    start = start or datetime.now() + timedelta(days=7)
+    return SpielerPlusEvent(
+        id=event_id,
+        event_type=event_type,
+        title="Turnier",
+        subtitle="Staffeltag",
+        start=start,
+        end=start + timedelta(hours=2),
+        end_is_estimated=True,
+        attendance=Attendance.UNKNOWN,
+    )
+
+
+def test_pick_event_defaults_to_the_next_upcoming_tournament():
+    now = datetime.now()
+    events = [
+        _event("1", start=now - timedelta(days=1)),
+        _event("2", event_type="training", start=now + timedelta(days=1)),
+        _event("4", start=now + timedelta(days=9)),
+        _event("3", start=now + timedelta(days=3)),
+    ]
+
+    assert cli._pick_event(events, None).id == "3"
+
+
+def test_pick_event_accepts_a_qualified_or_bare_id():
+    events = [_event("7", event_type="match"), _event("8")]
+
+    assert cli._pick_event(events, "match-7").id == "7"
+    assert cli._pick_event(events, "8").id == "8"
+
+
+def test_pick_event_errors_when_nothing_matches():
+    with pytest.raises(cli.ConfigError, match="list-events"):
+        cli._pick_event([_event("8")], "tournament-9")
+    with pytest.raises(cli.ConfigError, match="no upcoming tournament"):
+        cli._pick_event([_event("2", event_type="training")], None)
+
+
+PLAYER_LIST_JOB_TOML = """
+[[job]]
+name = "u8"
+spielerplus_user_id = "333"
+google_calendar_id = "u8@group.calendar.google.com"
+club_name = "VfL Ulm"
+age_class = "F"
+"""
+
+
+def _fake_squad_client(event):
+    return MagicMock(
+        get_events=MagicMock(return_value=[event]),
+        get_participation=MagicMock(
+            return_value={"1": Attendance.ACCEPTED, "2": Attendance.DECLINED}
+        ),
+        get_members=MagicMock(
+            return_value=[
+                TeamMember("1", "Parent (Kid) Doe", ("Spieler",), date(1990, 1, 1)),
+                TeamMember("2", "Other (Gone) Roe", ("Spieler",)),
+                TeamMember("3", "Coach Person", ("Trainer",)),
+                TeamMember("4", "Silent Player", ("Spieler",)),
+            ]
+        ),
+    )
+
+
+def test_cmd_player_list_fills_the_template_with_the_squad(tmp_path, monkeypatch, capsys):
+    _env(monkeypatch)
+    jobs_file = _write_jobs_file(tmp_path, PLAYER_LIST_JOB_TOML)
+    template = tmp_path / "template.pdf"
+    template.write_bytes(b"%PDF")
+    event = _event("2061203", start=datetime(2099, 9, 27, 12, 0))
+    fake_spielerplus = _fake_squad_client(event)
+
+    with (
+        patch("calendar_sync.cli.load_dotenv"),
+        patch("calendar_sync.cli._build_spielerplus_client", return_value=fake_spielerplus),
+        patch("calendar_sync.cli.fill_player_list") as fake_fill,
+    ):
+        exit_code = cli.main(
+            ["--jobs-file", str(jobs_file), "player-list", "--template", str(template),
+             "--output", str(tmp_path / "out.pdf")]
+        )
+
+    assert exit_code == 0
+    fake_spielerplus.switch_user.assert_called_once_with("333")
+    fake_spielerplus.get_members.assert_called_once_with(with_birthdays=True)
+
+    (args, kwargs) = fake_fill.call_args
+    assert args[0] == template
+    assert [(r.last_name, r.first_name) for r in args[2]] == [("Doe", "Kid"), ("Player", "Silent")]
+    assert kwargs == {
+        "club": "VfL Ulm",
+        "list_date": date(2099, 9, 27),
+        "age_class": "f-junioren",
+    }
+    err = capsys.readouterr().err
+    assert "most likely the parent's" in err
+    assert "Silent Player" in err  # no birthday
+
+
+def test_cmd_player_list_dry_run_prints_without_writing(tmp_path, monkeypatch, capsys):
+    _env(monkeypatch)
+    jobs_file = _write_jobs_file(tmp_path, PLAYER_LIST_JOB_TOML)
+    fake_spielerplus = _fake_squad_client(_event("1"))
+
+    with (
+        patch("calendar_sync.cli.load_dotenv"),
+        patch("calendar_sync.cli._build_spielerplus_client", return_value=fake_spielerplus),
+        patch("calendar_sync.cli.fill_player_list") as fake_fill,
+    ):
+        exit_code = cli.main(
+            ["--jobs-file", str(jobs_file), "player-list", "--dry-run",
+             "--template", str(tmp_path / "missing.pdf")]
+        )
+
+    assert exit_code == 0
+    fake_fill.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Doe" in out and "2 player(s)" in out
+
+
+def test_cmd_player_list_reports_a_missing_template_before_logging_in(tmp_path, monkeypatch, capsys):
+    _env(monkeypatch)
+    jobs_file = _write_jobs_file(tmp_path, PLAYER_LIST_JOB_TOML)
+
+    with (
+        patch("calendar_sync.cli.load_dotenv"),
+        patch("calendar_sync.cli._build_spielerplus_client") as fake_build,
+    ):
+        exit_code = cli.main(
+            ["--jobs-file", str(jobs_file), "player-list", "--template", str(tmp_path / "nope.pdf")]
+        )
+
+    assert exit_code == 2
+    assert cli.TEMPLATE_SOURCE_URL in capsys.readouterr().err
+    fake_build.assert_not_called()

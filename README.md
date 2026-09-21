@@ -65,6 +65,9 @@ cp .env.example .env
 | `CALENDAR_SYNC_TIMEZONE` | no (default `Europe/Berlin`) | IANA timezone used for created events |
 | `CALENDAR_SYNC_TAG` | no (default `spielerplus-sync`) | Tag used to identify events this tool manages |
 | `CALENDAR_SYNC_JOBS_FILE` | no | Path to a multi-job TOML config — see [Multiple jobs](#multiple-jobs) |
+| `CALENDAR_SYNC_CLUB_NAME` | no | Club name filled into player lists — see [Player lists](#player-lists) |
+| `CALENDAR_SYNC_AGE_CLASS` | no | Age class ticked on player lists: `e-junioren`, `f-junioren` or `bambini` |
+| `CALENDAR_SYNC_FORM_TEMPLATE` | no (default `KiFu-Spielerliste.pdf`) | The association's blank player list form |
 
 ### Setting up Google Calendar API access
 
@@ -169,6 +172,60 @@ without changes on SpielerPlus is a no-op. (Add `--jobs-file jobs.toml`
 to any of the above to sync multiple profiles — see
 [Multiple jobs](#multiple-jobs).)
 
+## Player lists
+
+For every Kinderfußball match or tournament, the Württembergischer
+Fußballverband wants a [player list](https://www.wuerttfv.de/app/uploads/2020/09/KiFu-Spielerliste-2026.pdf)
+(surname, first name, birth date per player). `calendar-sync player-list`
+fills that form from SpielerPlus. It runs locally and does not touch
+Google Calendar.
+
+```bash
+# One-time: download the blank form
+curl -L -o KiFu-Spielerliste.pdf \
+  https://www.wuerttfv.de/app/uploads/2020/09/KiFu-Spielerliste-2026.pdf
+
+# Check who would end up on the list for the next tournament
+calendar-sync player-list --job u8 --dry-run
+
+# Write the filled-in PDF (default name: Spielerliste-<date>.pdf)
+calendar-sync player-list --job u8
+
+# A specific event, as printed by list-events
+calendar-sync player-list --job u8 --event tournament-2061203 --output u8.pdf
+```
+
+**Who is listed:** every team member with the *Spieler* role who has not
+declined the event. That includes players who said "unsicher", players
+who have not answered yet, and players who were not nominated. Coaches
+and managers are left off. A parent-coach whose child plays holds both
+roles, so they are listed.
+
+**Other fields:** the club name and the age-class checkbox come from
+`club_name`/`age_class` in the job (see `jobs.example.toml`). If the job
+leaves them unset, the `CALENDAR_SYNC_*` settings are used instead. You
+can override both with `--club`/`--age-class`. The date defaults to the
+event's date (`--date DD.MM.YYYY` to change it). The signature line is
+left for you to sign.
+
+**Caveats:** SpielerPlus stores data per *account*, and in youth teams an
+account usually belongs to a parent. Keep that in mind when you check the
+sheet:
+
+- Names like `Ahmet (Çınar) Utlu` are read as parent (child) surname,
+  so the list gets *Çınar Utlu*. If an account has no surname (e.g.
+  `Wladimir (Adrian)`), the surname cell is left blank and you get a
+  warning.
+- The birth date is whatever is on the account's profile. That is often
+  empty, and sometimes it is the **parent's** birth date. The command
+  fills it in exactly as SpielerPlus has it. It also warns about every
+  birth date that would make the player older than 18, and names every
+  player without one, so you can fix those before you hand the list in.
+
+The form's cells are found by where they sit on the page, not by their
+field names. A new year's version of the form should therefore work
+without any code changes.
+
 ## Running on a schedule with systemd
 
 `scripts/install-systemd.sh` sets up a systemd **timer** (a cron-like,
@@ -247,6 +304,7 @@ src/calendar_sync/
   spielerplus/       # SpielerPlus client (HTTP session, HTML parser, models)
   google_calendar/    # Google Calendar API client (auth, CRUD, models)
   sync/                # SyncService tying the two together
+  playerlist/          # Association player list: squad selection + PDF form filling
   config.py            # Settings + multi-job (JobConfig/load_jobs) config
   cli.py                # `calendar-sync` command line entry point
 tests/

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
@@ -12,8 +13,19 @@ from googleapiclient.discovery import Resource
 
 from .config import ConfigError, ResolvedJob, Settings, load_jobs
 from .google_calendar import GoogleCalendarClient, GoogleCalendarError, build_service
-from .spielerplus import SpielerPlusClient, SpielerPlusError
+from .playerlist import (
+    AGE_CLASSES,
+    PlayerListError,
+    build_rows,
+    fill_player_list,
+    implausible_age,
+    normalize_age_class,
+    select_players,
+)
+from .spielerplus import SpielerPlusClient, SpielerPlusError, SpielerPlusEvent
 from .sync import SyncResult, SyncService, prefixed_title_builder
+
+TEMPLATE_SOURCE_URL = "https://www.wuerttfv.de/app/uploads/2020/09/KiFu-Spielerliste-2026.pdf"
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +65,25 @@ def _resolve_jobs(
         if not jobs:
             raise ConfigError(f"no job named {job_name!r} in {jobs_file}")
     return jobs
+
+
+def _single_job(settings: Settings, args: argparse.Namespace, command: str) -> ResolvedJob | None:
+    """Resolve the one job a single-profile command should act on.
+
+    Returns ``None`` in legacy single-job mode (no jobs file), where the
+    settings themselves describe the only profile.
+    """
+    jobs_file = _jobs_file(settings, args)
+    if jobs_file is None:
+        return None
+
+    jobs = _resolve_jobs(settings, jobs_file, args.job)
+    if args.job is None and len(jobs) > 1:
+        raise ConfigError(
+            f"{jobs_file} defines multiple jobs; pass --job NAME to pick which profile to "
+            f"run {command} for"
+        )
+    return jobs[0]
 
 
 def _google_client_for_job(
@@ -104,24 +135,122 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 def cmd_list_events(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
-    jobs_file = _jobs_file(settings, args)
+    job = _single_job(settings, args, "list-events")
     spielerplus = _build_spielerplus_client(settings)
 
-    if jobs_file is not None:
-        jobs = _resolve_jobs(settings, jobs_file, args.job)
-        if args.job is None and len(jobs) > 1:
-            raise ConfigError(
-                f"{jobs_file} defines multiple jobs; pass --job NAME to pick which profile to list events for"
-            )
-        job = jobs[0]
-        if job.spielerplus_user_id:
-            spielerplus.switch_user(job.spielerplus_user_id)
+    if job is not None and job.spielerplus_user_id:
+        spielerplus.switch_user(job.spielerplus_user_id)
 
     for event in spielerplus.get_events():
         print(
             f"{event.start:%Y-%m-%d %H:%M}-{event.end:%H:%M}  "
             f"{event.title} [{event.event_type}] attendance={event.attendance.value}"
         )
+    return 0
+
+
+def _pick_event(events: list[SpielerPlusEvent], wanted: str | None) -> SpielerPlusEvent:
+    """Find the event to build a player list for.
+
+    ``wanted`` is an event id as printed by ``list-events``, either
+    qualified (``tournament-2061203``) or bare (``2061203``). Without
+    one, the next upcoming tournament is used.
+    """
+    if wanted is not None:
+        matches = [
+            event for event in events if wanted in (event.uid, event.id)
+        ]
+        if not matches:
+            raise ConfigError(
+                f"no upcoming event {wanted!r} for this profile; "
+                f"run list-events to see what there is"
+            )
+        return matches[0]
+
+    now = datetime.now()
+    upcoming = sorted(
+        (e for e in events if e.event_type == "tournament" and e.start >= now),
+        key=lambda event: event.start,
+    )
+    if not upcoming:
+        raise ConfigError(
+            "no upcoming tournament for this profile; pass --event to pick another event"
+        )
+    return upcoming[0]
+
+
+def _warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
+def cmd_player_list(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    job = _single_job(settings, args, "player-list")
+
+    club = args.club or (job.club_name if job else None) or settings.club_name
+    raw_age_class = args.age_class or (job.age_class if job else None) or settings.age_class
+    age_class = normalize_age_class(raw_age_class) if raw_age_class else None
+    template = args.template or settings.form_template
+    if not args.dry_run and not template.exists():
+        raise ConfigError(
+            f"player list template not found at {template}; download it from "
+            f"{TEMPLATE_SOURCE_URL} or point --template at your copy"
+        )
+
+    spielerplus = _build_spielerplus_client(settings)
+    if job is not None and job.spielerplus_user_id:
+        spielerplus.switch_user(job.spielerplus_user_id)
+
+    event = _pick_event(spielerplus.get_events(), args.event)
+    print(f"Event: {event.title} {event.subtitle} on {event.start:%d.%m.%Y %H:%M} ({event.uid})")
+
+    participation = spielerplus.get_participation(event)
+    # One profile request per member, so say what is happening first.
+    print("Fetching squad and birthdays from SpielerPlus...")
+    members = spielerplus.get_members(with_birthdays=True)
+    rows = build_rows(select_players(members, participation))
+    if not rows:
+        raise ConfigError("no players left for this event — every squad member has declined")
+
+    event_date = event.start.date()
+    for row in rows:
+        age = implausible_age(row, event_date)
+        if age is not None:
+            _warn(
+                f"{row.source_name}: birthday {row.birthday_text} makes the player {age} years "
+                f"old — SpielerPlus stores one birthday per account, so this is most likely "
+                f"the parent's"
+            )
+    missing_birthday = [row.source_name for row in rows if row.birthday is None]
+    if missing_birthday:
+        _warn(
+            f"no birthday set in SpielerPlus for {len(missing_birthday)} player(s), "
+            f"left blank: {', '.join(missing_birthday)}"
+        )
+    missing_last_name = [row.source_name for row in rows if not row.last_name]
+    if missing_last_name:
+        _warn(f"no surname could be derived for: {', '.join(missing_last_name)}")
+
+    if args.dry_run:
+        for index, row in enumerate(rows, start=1):
+            print(f"{index:>3}. {row.last_name:<20} {row.first_name:<20} {row.birthday_text}")
+        print(f"{len(rows)} player(s); not writing a PDF (--dry-run)")
+        return 0
+
+    output = args.output or Path(f"Spielerliste-{event.start:%Y-%m-%d}.pdf")
+    fill_player_list(
+        template,
+        output,
+        rows,
+        club=club,
+        list_date=args.date or event_date,
+        age_class=age_class,
+    )
+    print(f"Wrote {len(rows)} player(s) to {output}")
+    if club is None:
+        _warn("no club name configured (--club / club_name in the jobs file); left blank")
+    if age_class is None:
+        _warn("no age class configured (--age-class / age_class in the jobs file); left unticked")
     return 0
 
 
@@ -182,6 +311,38 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--job", help="list events for this job's SpielerPlus profile")
     list_parser.set_defaults(func=cmd_list_events)
 
+    player_list_parser = subparsers.add_parser(
+        "player-list",
+        help="fill the association's player list PDF with a tournament's squad",
+    )
+    player_list_parser.add_argument("--job", help="build the list for this job's SpielerPlus profile")
+    player_list_parser.add_argument(
+        "--event",
+        help=(
+            "event to build the list for, as printed by list-events (e.g. "
+            "tournament-2061203). Default: the next upcoming tournament."
+        ),
+    )
+    player_list_parser.add_argument("--output", type=Path, help="where to write the filled PDF")
+    player_list_parser.add_argument(
+        "--template",
+        type=Path,
+        help=f"the association's blank form (default: CALENDAR_SYNC_FORM_TEMPLATE, from {TEMPLATE_SOURCE_URL})",
+    )
+    player_list_parser.add_argument("--club", help="club name to fill in (\"Name des Vereins\")")
+    player_list_parser.add_argument(
+        "--age-class", help=f"age class to tick: {', '.join(AGE_CLASSES)}"
+    )
+    player_list_parser.add_argument(
+        "--date",
+        type=lambda raw: datetime.strptime(raw, "%d.%m.%Y").date(),
+        help="date for the form's signature line, DD.MM.YYYY (default: the event's date)",
+    )
+    player_list_parser.add_argument(
+        "--dry-run", action="store_true", help="print the players instead of writing a PDF"
+    )
+    player_list_parser.set_defaults(func=cmd_player_list)
+
     login_parser = subparsers.add_parser(
         "google-login", help="run the Google OAuth flow once and cache a token for later syncs"
     )
@@ -214,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return args.func(args)
-    except ConfigError as exc:
+    except (ConfigError, PlayerListError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2
 

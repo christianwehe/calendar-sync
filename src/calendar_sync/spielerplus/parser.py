@@ -12,13 +12,17 @@ unit tested against static fixtures without any network access.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime, timedelta
+from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
 from .exceptions import ParseError
-from .models import Attendance, SpielerPlusEvent, Team
+from .models import Attendance, SpielerPlusEvent, Team, TeamMember
+
+logger = logging.getLogger(__name__)
 
 _LOGIN_TITLES = {"Einloggen", "Login"}
 _TEAM_SELECT_TITLES = {"Team auswählen", "Select team"}
@@ -33,7 +37,23 @@ _ATTENDANCE_BY_TITLE = {
     "Declined / Absent": Attendance.DECLINED,
 }
 
+# The per-event participation list groups members under collapsible
+# sections keyed by SpielerPlus' own numeric participation code (the same
+# values `set_attendance` posts, plus two the user cannot pick). The code
+# is read off the section's collapse target rather than its heading,
+# which keeps this independent of the account's UI language.
+_ATTENDANCE_BY_CODE = {
+    "1": Attendance.ACCEPTED,
+    "2": Attendance.UNSURE,
+    "0": Attendance.DECLINED,
+    "3": Attendance.NOT_NOMINATED,
+    "99": Attendance.UNKNOWN,
+}
+
+_COLLAPSE_TARGET_RE = re.compile(r"#(\d+)-parti-collapse")
+
 _DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.?")
+_FULL_DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})")
 _TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*(AM|PM)?", re.IGNORECASE)
 
 DEFAULT_EVENT_DURATION = timedelta(hours=2)
@@ -225,3 +245,112 @@ def parse_events(html: str, reference_date: datetime | None = None) -> list[Spie
 
     soup = BeautifulSoup(html, "html.parser")
     return [_parse_event(event_el, reference_date) for event_el in soup.select(".event")]
+
+
+def _user_id_from_href(href: str) -> str | None:
+    """Pull the user id out of a ``/user/view?id=123`` link."""
+    ids = parse_qs(urlparse(href).query).get("id")
+    return ids[0] if ids else None
+
+
+def parse_members(html: str) -> list[TeamMember]:
+    """Parse the team's "Mitglieder" page into members with their roles."""
+    soup = BeautifulSoup(html, "html.parser")
+    members: list[TeamMember] = []
+    for item in soup.select(".team-list-item"):
+        link = item.select_one("a.list-item-link[href]")
+        if link is None:
+            raise ParseError("member entry has no profile link")
+        member_id = _user_id_from_href(link["href"])
+        if member_id is None:
+            raise ParseError(f"member link has no id parameter: {link['href']!r}")
+
+        label = item.select_one(".list-label")
+        if label is None:
+            raise ParseError(f"member {member_id} has no .list-label")
+
+        roles = tuple(role.get_text(strip=True) for role in item.select(".user-role-item"))
+        members.append(TeamMember(id=member_id, name=label.get_text(strip=True), roles=roles))
+    return members
+
+
+def parse_participation(html: str) -> dict[str, Attendance]:
+    """Parse the per-event participation modal into ``user id -> status``.
+
+    The modal lists the whole squad grouped by response, so members who
+    have not answered are included too (as ``Attendance.UNKNOWN``).
+    Guest players, who have no SpielerPlus account, are skipped.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    participation: dict[str, Attendance] = {}
+
+    for section in soup.select(".participation-list"):
+        header = section.select_one(".participation-list-header")
+        target = (header.get("data-target") or "") if header is not None else ""
+        code_match = _COLLAPSE_TARGET_RE.fullmatch(target)
+        if code_match is None:
+            raise ParseError(f"participation section has no usable collapse target: {target!r}")
+
+        attendance = _ATTENDANCE_BY_CODE.get(code_match.group(1))
+        if attendance is None:
+            # An unrecognised group is more likely a new SpielerPlus
+            # feature than corrupt markup. Leaving its members out means
+            # they fall back to "no response given", which keeps them on
+            # the player list rather than silently dropping them.
+            logger.warning(
+                "unknown participation group %r; its members are treated as unanswered",
+                code_match.group(1),
+            )
+            continue
+
+        for user_el in section.select(".participation-list-user"):
+            photo = user_el.select_one("a.participation-list-user-photo[href]")
+            if photo is None:
+                continue  # guest player, or the "add a guest" placeholder row
+            user_id = _user_id_from_href(photo["href"])
+            if user_id is not None:
+                participation[user_id] = attendance
+
+    return participation
+
+
+def parse_profile_fields(html: str) -> dict[str, str]:
+    """Parse the label/value pairs from a member's profile page.
+
+    Values SpielerPlus has nothing to show for are rendered as ``"-"``
+    and are left out here.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    fields: dict[str, str] = {}
+    for label_el in soup.select("small.light b"):
+        container = label_el.find_parent("div")
+        value_el = container.select_one("p.dark") if container is not None else None
+        if value_el is None:
+            continue
+        value = value_el.get_text(strip=True)
+        if value and value != "-":
+            fields[label_el.get_text(strip=True)] = value
+    return fields
+
+
+def parse_birthday(html: str) -> date | None:
+    """Parse the birthday off a member's profile page, if one is set.
+
+    Careful: this is the birthday of the account holder. In youth teams
+    the account usually belongs to a parent, so this is often *not* the
+    birthday of the child who plays.
+    """
+    for label in ("Geburtstag", "Birthday", "Date of birth"):
+        raw = parse_profile_fields(html).get(label)
+        if raw is None:
+            continue
+        match = _FULL_DATE_RE.search(raw)
+        if match is None:
+            return None
+        day, month, year = (int(part) for part in match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            logger.warning("profile has an invalid birthday %r", raw)
+            return None
+    return None

@@ -9,12 +9,13 @@ scrape the "Events" page. See ``parser.py`` for the HTML parsing itself.
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 import requests
 
 from . import parser
 from .exceptions import AuthenticationError, ParseError, SpielerPlusError
-from .models import Attendance, SpielerPlusEvent, Team
+from .models import Attendance, SpielerPlusEvent, Team, TeamMember
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ MORE_EVENTS_URL = f"{BASE_URL}/events/ajaxgetevents"
 LOGIN_URL = f"{BASE_URL}/site/login"
 SWITCH_USER_URL = f"{BASE_URL}/site/switch-user"
 PARTICIPATION_URL = f"{BASE_URL}/events/ajax-participation-form"
+MEMBERS_URL = f"{BASE_URL}/team"
+PROFILE_URL = f"{BASE_URL}/user/view"
+EVENT_PARTICIPATION_URL = f"{BASE_URL}/events/ajaxgetparticipation"
 
 _PARTICIPATION_VALUE = {
     Attendance.ACCEPTED: "1",
@@ -150,6 +154,53 @@ class SpielerPlusClient:
         except (ValueError, KeyError, TypeError) as exc:
             raise ParseError(f"unexpected response when loading more events: {exc}") from exc
         return parser.parse_events(html), count
+
+    def get_members(self, with_birthdays: bool = False) -> list[TeamMember]:
+        """Fetch the current team's members along with their roles.
+
+        ``with_birthdays`` additionally fetches every member's profile
+        page — one request each — to fill in
+        :attr:`TeamMember.birthday`, which the member list itself does
+        not carry.
+        """
+        self._require_login()
+        response = self._get(MEMBERS_URL)
+        members = parser.parse_members(response.text)
+        if not with_birthdays:
+            return members
+        return [
+            TeamMember(
+                id=member.id,
+                name=member.name,
+                roles=member.roles,
+                birthday=self.get_birthday(member.id),
+            )
+            for member in members
+        ]
+
+    def get_birthday(self, user_id: str) -> date | None:
+        """Fetch a member's birthday from their profile, if one is set."""
+        self._require_login()
+        response = self._get(PROFILE_URL, params={"id": user_id})
+        return parser.parse_birthday(response.text)
+
+    def get_participation(self, event: SpielerPlusEvent) -> dict[str, Attendance]:
+        """Fetch every squad member's response to ``event``.
+
+        Returns a mapping of SpielerPlus user id to status, covering
+        members who have not answered yet as well.
+        """
+        self._require_login()
+        response = self._post(
+            EVENT_PARTICIPATION_URL,
+            data={"eventid": event.id, "eventtype": event.event_type},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        try:
+            html = response.json()["html"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ParseError(f"unexpected response when loading participation: {exc}") from exc
+        return parser.parse_participation(html)
 
     def set_attendance(
         self,

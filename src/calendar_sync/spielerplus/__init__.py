@@ -1,6 +1,6 @@
 from .client import SpielerPlusClient
 from .exceptions import AuthenticationError, ParseError, SpielerPlusError
-from .models import Attendance, SpielerPlusEvent, Team
+from .models import Attendance, SpielerPlusEvent, Team, TeamMember
 
 __all__ = [
     "SpielerPlusClient",
@@ -10,4 +10,5 @@ __all__ = [
     "SpielerPlusEvent",
     "Attendance",
     "Team",
+    "TeamMember",
 ]

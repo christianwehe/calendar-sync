@@ -1,14 +1,17 @@
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import parse_qs
 
 import pytest
 import responses
 
 from calendar_sync.spielerplus.client import (
+    EVENT_PARTICIPATION_URL,
     EVENTS_URL,
     LOGIN_URL,
+    MEMBERS_URL,
     MORE_EVENTS_URL,
     PARTICIPATION_URL,
+    PROFILE_URL,
     SWITCH_USER_URL,
     SpielerPlusClient,
 )
@@ -254,3 +257,85 @@ def test_set_attendance_raises_on_unexpected_status(load_fixture):
     )
     with pytest.raises(SpielerPlusError):
         client.set_attendance(event, Attendance.ACCEPTED, user_id="42")
+
+
+def _logged_in_client(load_fixture) -> SpielerPlusClient:
+    responses.add(responses.GET, EVENTS_URL, body=load_fixture("events_page.html"))
+    client = SpielerPlusClient()
+    client.login("me@example.com", "hunter2")
+    return client
+
+
+@responses.activate
+def test_get_members_without_birthdays_fetches_only_the_member_list(load_fixture):
+    client = _logged_in_client(load_fixture)
+    responses.add(responses.GET, MEMBERS_URL, body=load_fixture("members_page.html"))
+
+    members = client.get_members()
+
+    assert [m.id for m in members] == ["1001", "1002", "1003", "1004"]
+    assert all(m.birthday is None for m in members)
+    assert not any(call.request.url.startswith(PROFILE_URL) for call in responses.calls)
+
+
+@responses.activate
+def test_get_members_with_birthdays_fetches_each_profile(load_fixture):
+    client = _logged_in_client(load_fixture)
+    responses.add(responses.GET, MEMBERS_URL, body=load_fixture("members_page.html"))
+    responses.add(responses.GET, PROFILE_URL, body=load_fixture("profile_page.html"))
+
+    members = client.get_members(with_birthdays=True)
+
+    assert [m.birthday for m in members] == [date(1992, 4, 9)] * 4
+    profile_calls = [c for c in responses.calls if c.request.url.startswith(PROFILE_URL)]
+    assert [parse_qs(c.request.url.split("?", 1)[1])["id"] for c in profile_calls] == [
+        ["1001"], ["1002"], ["1003"], ["1004"]
+    ]
+
+
+@responses.activate
+def test_get_participation_posts_the_event_and_parses_the_modal(load_fixture):
+    client = _logged_in_client(load_fixture)
+    responses.add(
+        responses.POST,
+        EVENT_PARTICIPATION_URL,
+        json={"html": load_fixture("participation_modal.html")},
+    )
+    event = SpielerPlusEvent(
+        id="2061203",
+        event_type="tournament",
+        title="Turnier",
+        subtitle="",
+        start=datetime(2026, 9, 27, 12, 0),
+        end=datetime(2026, 9, 27, 14, 0),
+        end_is_estimated=True,
+        attendance=Attendance.UNKNOWN,
+    )
+
+    participation = client.get_participation(event)
+
+    assert participation["1002"] == Attendance.ACCEPTED
+    body = parse_qs(responses.calls[-1].request.body)
+    assert body == {"eventid": ["2061203"], "eventtype": ["tournament"]}
+
+
+@responses.activate
+def test_get_participation_rejects_a_non_json_response(load_fixture):
+    client = _logged_in_client(load_fixture)
+    responses.add(responses.POST, EVENT_PARTICIPATION_URL, body="<html>oops</html>")
+    event = SpielerPlusEvent(
+        id="1", event_type="tournament", title="", subtitle="",
+        start=datetime(2026, 9, 27), end=datetime(2026, 9, 27),
+        end_is_estimated=True, attendance=Attendance.UNKNOWN,
+    )
+
+    with pytest.raises(ParseError, match="participation"):
+        client.get_participation(event)
+
+
+def test_new_methods_require_login():
+    client = SpielerPlusClient()
+    with pytest.raises(AuthenticationError):
+        client.get_members()
+    with pytest.raises(AuthenticationError):
+        client.get_birthday("1")

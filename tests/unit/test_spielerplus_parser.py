@@ -141,3 +141,77 @@ def test_event_uid_is_stable_identifier(load_fixture):
     events = parser.parse_events(load_fixture("events_page.html"), reference_date=REFERENCE_DATE)
     assert events[0].uid == "training-111"
     assert events[1].uid == "match-222"
+
+
+def test_parse_members_reads_names_ids_and_roles(load_fixture):
+    members = parser.parse_members(load_fixture("members_page.html"))
+
+    assert [member.id for member in members] == ["1001", "1002", "1003", "1004"]
+    assert members[1].name == "Parent (Child) Playerson"
+    assert members[1].roles == ("Trainer", "Spieler")
+
+
+def test_parse_members_marks_only_members_holding_the_player_role(load_fixture):
+    members = parser.parse_members(load_fixture("members_page.html"))
+
+    # A parent who coaches and whose child plays holds both roles and
+    # still counts as a player; an inactive member does not.
+    assert [member.is_player for member in members] == [False, True, True, False]
+
+
+def test_parse_members_rejects_an_entry_without_a_profile_link():
+    with pytest.raises(ParseError, match="profile link"):
+        parser.parse_members('<div class="team-list-item"><div class="list-label">X</div></div>')
+
+
+def test_parse_participation_maps_every_group_to_a_status(load_fixture):
+    participation = parser.parse_participation(load_fixture("participation_modal.html"))
+
+    # The guest placeholder row has no account and is skipped.
+    assert participation == {
+        "1003": Attendance.UNKNOWN,
+        "1002": Attendance.ACCEPTED,
+        "1001": Attendance.UNSURE,
+        "1005": Attendance.DECLINED,
+        "1006": Attendance.NOT_NOMINATED,
+    }
+
+
+def test_parse_participation_ignores_an_unknown_group(caplog):
+    html = """
+    <div class="participation-list">
+      <h4 class="participation-list-header" data-target="#42-parti-collapse">Neu</h4>
+      <div class="collapse" id="42-parti-collapse">
+        <div class="participation-list-user">
+          <a class="participation-list-user-photo" href="/user/view?id=7"></a>
+        </div>
+      </div>
+    </div>
+    """
+    # Members of an unrecognised group fall back to "no response given",
+    # which keeps them on the player list instead of dropping them.
+    assert parser.parse_participation(html) == {}
+    assert "unknown participation group" in caplog.text
+
+
+def test_parse_participation_rejects_a_section_without_a_status_code():
+    html = '<div class="participation-list"><h4 class="participation-list-header">Zugesagt</h4></div>'
+    with pytest.raises(ParseError, match="collapse target"):
+        parser.parse_participation(html)
+
+
+def test_parse_birthday_reads_the_profile_field(load_fixture):
+    assert parser.parse_birthday(load_fixture("profile_page.html")) == date(1992, 4, 9)
+
+
+def test_parse_birthday_returns_none_when_unset():
+    html = '<div><small class="light"><b>Geburtstag</b></small><p class="dark">-</p></div>'
+    assert parser.parse_birthday(html) is None
+
+
+def test_parse_profile_fields_skips_empty_values(load_fixture):
+    fields = parser.parse_profile_fields(load_fixture("profile_page.html"))
+
+    assert fields["Mitglied seit"] == "28.06.2026"
+    assert "Adresse" not in fields
+    assert "Passnummer" not in fields

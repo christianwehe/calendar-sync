@@ -35,6 +35,9 @@ class Settings:
     timezone: str = "Europe/Berlin"
     sync_tag: str = "spielerplus-sync"
     jobs_file: Path | None = None
+    club_name: str | None = None
+    age_class: str | None = None
+    form_template: Path = Path("KiFu-Spielerliste.pdf")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -57,6 +60,9 @@ class Settings:
             timezone=env.get("CALENDAR_SYNC_TIMEZONE", "Europe/Berlin"),
             sync_tag=env.get("CALENDAR_SYNC_TAG", "spielerplus-sync"),
             jobs_file=Path(jobs_file) if jobs_file else None,
+            club_name=env.get("CALENDAR_SYNC_CLUB_NAME") or None,
+            age_class=env.get("CALENDAR_SYNC_AGE_CLASS") or None,
+            form_template=Path(env.get("CALENDAR_SYNC_FORM_TEMPLATE", "KiFu-Spielerliste.pdf")),
         )
 
 
@@ -76,6 +82,8 @@ class JobConfig:
     sync_tag: str | None = None
     timezone: str | None = None
     title_prefix: str | None = None
+    club_name: str | None = None
+    age_class: str | None = None
 
     def resolve(self, settings: Settings) -> "ResolvedJob":
         calendar_id = self.google_calendar_id or settings.google_calendar_id
@@ -90,6 +98,8 @@ class JobConfig:
             sync_tag=self.sync_tag or settings.sync_tag,
             timezone=self.timezone or settings.timezone,
             title_prefix=self.title_prefix,
+            club_name=self.club_name or settings.club_name,
+            age_class=self.age_class or settings.age_class,
         )
 
 
@@ -104,6 +114,8 @@ class ResolvedJob:
     sync_tag: str
     timezone: str
     title_prefix: str | None = None
+    club_name: str | None = None
+    age_class: str | None = None
 
 
 def load_jobs(path: str | Path) -> list[JobConfig]:
@@ -147,6 +159,8 @@ def load_jobs(path: str | Path) -> list[JobConfig]:
                 sync_tag=entry.get("sync_tag"),
                 timezone=entry.get("timezone"),
                 title_prefix=entry.get("title_prefix"),
+                club_name=entry.get("club_name"),
+                age_class=entry.get("age_class"),
             )
         )
     return jobs
